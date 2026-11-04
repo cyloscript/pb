@@ -1,3 +1,4 @@
+
 local UserInputService = game:GetService('UserInputService')
 local TweenService = game:GetService('TweenService')
 local RunService = game:GetService('RunService')
@@ -5,6 +6,7 @@ local CoreGui = game:GetService('CoreGui')
 local Players = game:GetService('Players')
 local TextService = game:GetService('TextService')
 local HttpService = game:GetService('HttpService')
+local VirtualInputManager = game:GetService('VirtualInputManager')
 
 local LocalPlayer = Players.LocalPlayer
 local uiParent = (pcall(function() return CoreGui.Name end) and CoreGui) or LocalPlayer:WaitForChild('PlayerGui')
@@ -569,7 +571,7 @@ ObsidianLib.CreateWindow = function(self, options)
         })
 
         local TogText = createInstance('TextLabel', {
-            Parent = TogTextFrame,
+            Parent = ToggleBtn,
             BackgroundTransparency = 1,
             Size = UDim2.new(1, 0, 1, 0),
             RichText = true,
@@ -678,9 +680,6 @@ ObsidianLib.CreateWindow = function(self, options)
         TextStrokeTransparency = 0,
         TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
     })
-    -- keep grey + black stroke (don't re-theme to TextMain)
-
-
 
     local SearchOverlay = createInstance('CanvasGroup', {
         Parent = ScreenGui,
@@ -1247,175 +1246,116 @@ ObsidianLib.CreateWindow = function(self, options)
 
             local UpdateSlider = function(input)
                 local percent = math.clamp((input.Position.X - TrackBox.AbsolutePosition.X) / TrackBox.AbsoluteSize.X, 0, 1)
-                local value = Min + ((Max - Min) * percent)
-                SetValue(value)
+                local val = Min + (Max - Min) * percent
+                SetValue(val)
             end
 
-            local dragging = false
+            local sliding = false
             TrackBox.InputBegan:Connect(function(input)
                 if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                    dragging = true
+                    sliding = true
+                    UpdateSlider(input)
+                end
+            end)
+            TrackBox.InputChanged:Connect(function(input)
+                if sliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
                     UpdateSlider(input)
                 end
             end)
             UserInputService.InputEnded:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
-            end)
-            UserInputService.InputChanged:Connect(function(input)
-                if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then UpdateSlider(input) end
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    sliding = false
+                end
             end)
 
             ValTextBox.FocusLost:Connect(function()
-                local numStr = string.match(ValTextBox.Text, '^%-?%d+%.?%d*')
-                local num = tonumber(numStr) or Default
-                SetValue(num)
+                local num = tonumber(ValTextBox.Text:match('[%d%.%-]+'))
+                if num then SetValue(num) end
             end)
-            
-            function Element:Set(val) SetValue(val) end
+
+            function Element:Set(val)
+                SetValue(val)
+            end
+
             return Element
         end
 
         Builder.CreateToggle = function(self, options)
             local ElementName = options.Name or 'Toggle'
             local Default = options.Default or false
-            local Keybind = options.Keybind
             local Callback = options.Callback or function() end
-            
-            local state = Default
-            local currentBind = Keybind
 
             local Element = { Value = Default }
             ObsidianLib.Flags[ElementName] = Element
 
-            local TogFrame = createInstance('ImageButton', {
+            local Container = createInstance('Frame', {
                 Parent = PageTarget,
                 BackgroundColor3 = Theme.ElementBG,
-                Size = UDim2.new(1, 0, 0, 36),
-                AutoButtonColor = false,
-                Image = ''
+                Size = UDim2.new(1, 0, 0, 36)
             })
-            createInstance('UICorner', {Parent = TogFrame, CornerRadius = UDim.new(0, 4)})
-            regTheme(TogFrame, function() TogFrame.BackgroundColor3 = Theme.ElementBG end)
-            table.insert(WindowObj.ElementsList, {Name = ElementName, Frame = TogFrame, Tab = ParentTab})
+            createInstance('UICorner', {Parent = Container, CornerRadius = UDim.new(0, 4)})
+            regTheme(Container, function() Container.BackgroundColor3 = Theme.ElementBG end)
+            table.insert(WindowObj.ElementsList, {Name = ElementName, Frame = Container, Tab = ParentTab})
 
             local TitleLabel = createInstance('TextLabel', {
-                Parent = TogFrame,
+                Parent = Container,
                 BackgroundTransparency = 1,
                 Position = UDim2.new(0, 12, 0, 0),
-                Size = UDim2.new(1, -120, 1, 0),
+                Size = UDim2.new(1, -70, 1, 0),
                 Font = Enum.Font.GothamMedium,
                 Text = ElementName,
                 TextColor3 = Theme.TextSub,
                 TextSize = 13,
                 TextXAlignment = Enum.TextXAlignment.Left
             })
-            regTheme(TitleLabel, function()
-                TitleLabel.TextColor3 = state and Theme.TextMain or Theme.TextSub
-            end)
+            regTheme(TitleLabel, function() TitleLabel.TextColor3 = Theme.TextSub end)
 
-            local Switch = createInstance('Frame', {
-                Parent = TogFrame,
-                BackgroundColor3 = Color3.fromRGB(20, 20, 20),
+            local ToggleBg = createInstance('Frame', {
+                Parent = Container,
                 AnchorPoint = Vector2.new(1, 0.5),
-                Position = UDim2.new(1, -12, 0.5, 0),
-                Size = UDim2.new(0, 28, 0, 10)
+                Position = UDim2.new(1, -10, 0.5, 0),
+                Size = UDim2.new(0, 42, 0, 22),
+                BackgroundColor3 = Default and Theme.Accent or Color3.fromRGB(50, 50, 50)
             })
-            createInstance('UICorner', {Parent = Switch, CornerRadius = UDim.new(1, 0)})
+            createInstance('UICorner', {Parent = ToggleBg, CornerRadius = UDim.new(1, 0)})
+            regTheme(ToggleBg, function()
+                ToggleBg.BackgroundColor3 = Element.Value and Theme.Accent or Color3.fromRGB(50, 50, 50)
+            end)
 
             local Knob = createInstance('Frame', {
-                Parent = Switch,
-                BackgroundColor3 = state and GetDarkerColor(Theme.Accent, 0.4) or Color3.fromRGB(150, 150, 150),
-                AnchorPoint = Vector2.new(0, 0.5),
-                Position = state and UDim2.new(1, -14, 0.5, 0) or UDim2.new(0, -2, 0.5, 0),
-                Size = UDim2.new(0, 16, 0, 16)
+                Parent = ToggleBg,
+                Size = UDim2.new(0, 16, 0, 16),
+                Position = Default and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8),
+                BackgroundColor3 = Color3.fromRGB(255, 255, 255)
             })
             createInstance('UICorner', {Parent = Knob, CornerRadius = UDim.new(1, 0)})
-            
-            regTheme(Switch, function()
-                if state then
-                    Switch.BackgroundColor3 = GetDarkerColor(Theme.Accent, 0.4)
-                    Knob.BackgroundColor3 = Theme.Accent
-                else
-                    Switch.BackgroundColor3 = Theme.MainBG
-                    Knob.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
-                end
+
+            SetupTooltip(Container, options.Tip)
+
+            local function SetToggle(val)
+                Element.Value = val
+                ObsidianLib.Flags[ElementName].Value = val
+                TweenService:Create(ToggleBg, TweenInfo.new(0.2), {
+                    BackgroundColor3 = val and Theme.Accent or Color3.fromRGB(50, 50, 50)
+                }):Play()
+                TweenService:Create(Knob, TweenInfo.new(0.2), {
+                    Position = val and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)
+                }):Play()
+                Callback(val)
+            end
+
+            local ClickBtn = createInstance('TextButton', {
+                Parent = Container,
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 1, 0),
+                Text = ''
+            })
+            ClickBtn.MouseButton1Click:Connect(function()
+                SetToggle(not Element.Value)
             end)
 
-            SetupTooltip(TogFrame, options.Tip)
-
-            local FireToggle = function(skipAnim)
-                local speed = skipAnim and 0 or 0.2
-                TweenService:Create(Switch, TweenInfo.new(speed), {BackgroundColor3 = state and GetDarkerColor(Theme.Accent, 0.4) or Theme.MainBG}):Play()
-                TweenService:Create(Knob, TweenInfo.new(speed), {Position = state and UDim2.new(1, -14, 0.5, 0) or UDim2.new(0, -2, 0.5, 0), BackgroundColor3 = state and Theme.Accent or Color3.fromRGB(150, 150, 150)}):Play()
-                TweenService:Create(TitleLabel, TweenInfo.new(speed), {TextColor3 = state and Theme.TextMain or Theme.TextSub}):Play()
-                Element.Value = state
-                ObsidianLib.Flags[ElementName].Value = state
-            end
-            FireToggle(true)
-
-            TogFrame.MouseButton1Click:Connect(function()
-                state = not state
-                Callback(state)
-                FireToggle(false)
-            end)
-
-            if Keybind then
-                local BindContainer = createInstance('Frame', {
-                    Parent = TogFrame,
-                    AnchorPoint = Vector2.new(1, 0.5),
-                    Position = UDim2.new(1, -55, 0.5, 0),
-                    Size = UDim2.new(0, 45, 0, 22),
-                    BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-                })
-                createInstance('UICorner', {Parent = BindContainer, CornerRadius = UDim.new(0, 4)})
-                regTheme(BindContainer, function() BindContainer.BackgroundColor3 = Theme.MainBG end)
-                
-                local BindContainerStroke = createInstance('UIStroke', {Parent = BindContainer, Color = Theme.Border})
-                regTheme(BindContainerStroke, function() BindContainerStroke.Color = Theme.Border end)
-
-                local BindBtn = createInstance('TextButton', {
-                    Parent = BindContainer,
-                    BackgroundTransparency = 1,
-                    Size = UDim2.new(1, 0, 1, 0),
-                    Text = currentBind and currentBind.Name or '',
-                    Font = Enum.Font.Gotham,
-                    TextColor3 = Theme.TextSub,
-                    TextSize = 11
-                })
-
-                local UpdateBindSize = function()
-                    local bindName = currentBind and currentBind.Name or 'None'
-                    BindBtn.Text = bindName
-                    local textBounds = TextService:GetTextSize(bindName, 11, Enum.Font.Gotham, Vector2.new(1000, 22))
-                    BindContainer.Size = UDim2.new(0, math.max(textBounds.X + 16, 40), 0, 22)
-                end
-                UpdateBindSize()
-
-                local isBinding = false
-                BindBtn.MouseButton1Click:Connect(function()
-                    isBinding = true
-                    BindBtn.Text = '...'
-                    BindContainer.Size = UDim2.new(0, 40, 0, 22)
-                end)
-
-                UserInputService.InputBegan:Connect(function(input, gpe)
-                    if isBinding and (input.UserInputType == Enum.UserInputType.Keyboard or input.UserInputType == Enum.UserInputType.Gamepad1) then
-                        currentBind = input.KeyCode
-                        isBinding = false
-                        UpdateBindSize()
-                        Callback(state)
-                    elseif not gpe and currentBind and input.KeyCode == currentBind then
-                        state = not state
-                        Callback(state)
-                        FireToggle(false)
-                    end
-                end)
-            end
-            
             function Element:Set(val)
-                state = val
-                Callback(state)
-                FireToggle(true)
+                SetToggle(val)
             end
 
             return Element
@@ -1423,351 +1363,18 @@ ObsidianLib.CreateWindow = function(self, options)
 
         Builder.CreateDropdown = function(self, options)
             local ElementName = options.Name or 'Dropdown'
-            local DropOptions = options.Options or {}
-            local Default = options.Default
-            local MultiSelect = options.MultiSelect or false
-            local Callback = options.Callback or function() end
-
-            local currentSelection
-            if MultiSelect then
-                currentSelection = {}
-                if type(Default) == 'table' then
-                    for i = 1, #Default do
-                        table.insert(currentSelection, getStringValue(Default[i]))
-                    end
-                elseif type(Default) == 'string' and Default ~= '' then
-                    table.insert(currentSelection, Default)
-                end
-            else
-                if Default ~= nil then
-                    currentSelection = type(Default) == 'table' and tostring(Default or '') or tostring(Default)
-                else
-                    currentSelection = type(DropOptions) == 'table' and tostring(DropOptions or '') or ''
-                end
-                if type(currentSelection) == 'table' then currentSelection = 'None' end
-            end
-            
-            local Element = { Value = currentSelection }
-            ObsidianLib.Flags[ElementName] = Element
-
-            local Container = createInstance('ImageButton', {
-                Parent = PageTarget,
-                BackgroundColor3 = Theme.ElementBG,
-                Size = UDim2.new(1, 0, 0, 36),
-                AutoButtonColor = false,
-                Image = ''
-            })
-            createInstance('UICorner', {Parent = Container, CornerRadius = UDim.new(0, 4)})
-            regTheme(Container, function() Container.BackgroundColor3 = Theme.ElementBG end)
-            table.insert(WindowObj.ElementsList, {Name = ElementName, Frame = Container, Tab = ParentTab})
-
-            local TitleLabel = createInstance('TextLabel', {
-                Parent = Container,
-                BackgroundTransparency = 1,
-                Position = UDim2.new(0, 12, 0, 0),
-                Size = UDim2.new(1, -120, 1, 0),
-                Font = Enum.Font.GothamMedium,
-                Text = ElementName,
-                TextColor3 = Theme.TextSub,
-                TextSize = 13,
-                TextXAlignment = Enum.TextXAlignment.Left
-            })
-            regTheme(TitleLabel, function() TitleLabel.TextColor3 = Theme.TextSub end)
-
-            local SelectedBox = createInstance('Frame', {
-                Parent = Container,
-                BackgroundColor3 = Color3.fromRGB(22, 22, 22),
-                AnchorPoint = Vector2.new(1, 0.5),
-                Position = UDim2.new(1, -6, 0.5, 0),
-                Size = UDim2.new(0, 100, 0, 24)
-            })
-            createInstance('UICorner', {Parent = SelectedBox, CornerRadius = UDim.new(0, 4)})
-            regTheme(SelectedBox, function() SelectedBox.BackgroundColor3 = Theme.MainBG end)
-            
-            local SelectedBoxStroke = createInstance('UIStroke', {Parent = SelectedBox, Color = Theme.Border})
-            regTheme(SelectedBoxStroke, function() SelectedBoxStroke.Color = Theme.Border end)
-
-            local SelectedLabel = createInstance('TextLabel', {
-                Parent = SelectedBox,
-                BackgroundTransparency = 1,
-                Size = UDim2.new(1, -20, 1, 0),
-                Position = UDim2.new(0, 8, 0, 0),
-                Font = Enum.Font.Gotham,
-                TextColor3 = Theme.TextMain,
-                TextSize = 11,
-                TextXAlignment = Enum.TextXAlignment.Left,
-                TextTruncate = Enum.TextTruncate.AtEnd
-            })
-            regTheme(SelectedLabel, function() SelectedLabel.TextColor3 = Theme.TextMain end)
-            
-            local UpdateLabel = function()
-                if MultiSelect then
-                    SelectedLabel.Text = #currentSelection > 0 and table.concat(currentSelection, ', ') or 'None'
-                else
-                    SelectedLabel.Text = (currentSelection == '' or currentSelection == nil) and 'None' or tostring(currentSelection)
-                end
-            end
-            UpdateLabel()
-
-            local Icon = createInstance('TextLabel', {
-                Parent = SelectedBox,
-                BackgroundTransparency = 1,
-                AnchorPoint = Vector2.new(1, 0.5),
-                Position = UDim2.new(1, -5, 0.5, 0),
-                Size = UDim2.new(0, 16, 0, 16),
-                Font = Enum.Font.Gotham,
-                Text = '+',
-                TextColor3 = Theme.TextSub,
-                TextSize = 16
-            })
-            regTheme(Icon, function() Icon.TextColor3 = Theme.TextSub end)
-
-            local ListCanvas = createInstance('CanvasGroup', {
-                Parent = ScreenGui,
-                BackgroundTransparency = 1,
-                ZIndex = 100,
-                Size = UDim2.new(0, 0, 0, 0),
-                GroupTransparency = 1,
-                Visible = false
-            })
-            
-            local LCScale = createInstance('UIScale', {Parent = ListCanvas, Scale = CurrentScale})
-            table.insert(ScalesToUpdate, LCScale)
-            createInstance('UICorner', {Parent = ListCanvas, CornerRadius = UDim.new(0, 4)})
-
-            local ListFrame = createInstance('ScrollingFrame', {
-                Parent = ListCanvas,
-                BackgroundColor3 = Theme.DropdownListBG,
-                Size = UDim2.new(1, 0, 1, 0),
-                ZIndex = 100,
-                ScrollBarThickness = 2,
-                BorderSizePixel = 0,
-                AutomaticCanvasSize = Enum.AutomaticSize.Y
-            })
-            local ListFrameStroke = createInstance('UIStroke', {Parent = ListFrame, Color = Theme.DropdownListStroke})
-            
-            regTheme(ListFrame, function() 
-                ListFrame.BackgroundColor3 = Theme.DropdownListBG
-                ListFrameStroke.Color = Theme.DropdownListStroke
-            end)
-            
-            local CanvasLayout = createInstance('Frame', {
-                Parent = ListFrame,
-                BackgroundTransparency = 1,
-                Size = UDim2.new(1, 0, 0, 0),
-                AutomaticSize = Enum.AutomaticSize.Y
-            })
-            createInstance('UIListLayout', {Parent = CanvasLayout, SortOrder = Enum.SortOrder.LayoutOrder})
-
-            SetupTooltip(Container, options.Tip)
-
-            local expanded = false
-            local OptionsRendered = {}
-
-            local RefreshOptions = function()
-                local cList = CanvasLayout:GetChildren()
-                for i = 1, #cList do
-                    local v = cList[i]
-                    if v:IsA('TextButton') then v:Destroy() end
-                end
-                table.clear(OptionsRendered)
-
-                for i = 1, #DropOptions do
-                    local strOpt = tostring(DropOptions[i])
-                    
-                    local Option = createInstance('TextButton', {
-                        Parent = CanvasLayout,
-                        BackgroundTransparency = 1,
-                        Size = UDim2.new(1, 0, 0, 26),
-                        Text = '',
-                        ZIndex = 101
-                    })
-
-                    local isSel = false
-                    if MultiSelect then
-                        isSel = table.find(currentSelection, strOpt) ~= nil
-                    else
-                        isSel = currentSelection == strOpt
-                    end
-                    
-                    local OptCheck = createInstance('ImageLabel', {
-                        Parent = Option,
-                        BackgroundTransparency = 1,
-                        Position = isSel and UDim2.new(0, 8, 0.5, -7) or UDim2.new(0, 0, 0.5, -7),
-                        Size = UDim2.new(0, 14, 0, 14),
-                        Image = 'rbxassetid://6031094667',
-                        ImageColor3 = Theme.TextMain,
-                        ImageTransparency = isSel and 0 or 1,
-                        ZIndex = 101
-                    })
-                    regTheme(OptCheck, function() OptCheck.ImageColor3 = Theme.TextMain end)
-                    
-                    local OptText = createInstance('TextLabel', {
-                        Parent = Option,
-                        BackgroundTransparency = 1,
-                        Size = UDim2.new(1, -30, 1, 0),
-                        Position = UDim2.new(0, 28, 0, 0),
-                        Font = Enum.Font.GothamMedium,
-                        Text = strOpt,
-                        TextColor3 = isSel and Theme.TextMain or Theme.TextSub,
-                        TextSize = 13,
-                        TextXAlignment = Enum.TextXAlignment.Left,
-                        ZIndex = 101
-                    })
-
-                    table.insert(OptionsRendered, {
-                        Value = strOpt,
-                        Text = OptText,
-                        Check = OptCheck,
-                        Button = Option
-                    })
-                    
-                    Option.MouseEnter:Connect(function()
-                        TweenService:Create(OptText, TweenInfo.new(0.2), {TextColor3 = Theme.TextMain}):Play()
-                    end)
-                    Option.MouseLeave:Connect(function()
-                        local active = false
-                        if MultiSelect then active = table.find(currentSelection, strOpt) ~= nil else active = currentSelection == strOpt end
-                        TweenService:Create(OptText, TweenInfo.new(0.2), {TextColor3 = active and Theme.TextMain or Theme.TextSub}):Play()
-                    end)
-
-                    Option.MouseButton1Click:Connect(function()
-                        if MultiSelect then
-                            local idx = table.find(currentSelection, strOpt)
-                            if idx then 
-                                table.remove(currentSelection, idx) 
-                                OptText.TextColor3 = Theme.TextSub
-                                TweenService:Create(OptCheck, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0.5, -7), ImageTransparency = 1}):Play()
-                            else 
-                                table.insert(currentSelection, strOpt) 
-                                OptText.TextColor3 = Theme.TextMain
-                                TweenService:Create(OptCheck, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(0, 8, 0.5, -7), ImageTransparency = 0}):Play()
-                            end
-                        else
-                            currentSelection = strOpt
-                            expanded = false
-                            TweenService:Create(Icon, TweenInfo.new(0.3), {Rotation = 0}):Play()
-                            TweenService:Create(ListCanvas, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0, SelectedBox.AbsoluteSize.X, 0, 0), GroupTransparency = 1}):Play()
-                            task.delay(0.3, function() if not expanded then ListCanvas.Visible = false end end)
-                            
-                            for k = 1, #OptionsRendered do
-                                local renderData = OptionsRendered[k]
-                                if renderData.Value == strOpt then
-                                    renderData.Text.TextColor3 = Theme.TextMain
-                                    TweenService:Create(renderData.Check, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(0, 8, 0.5, -7), ImageTransparency = 0}):Play()
-                                else
-                                    renderData.Text.TextColor3 = Theme.TextSub
-                                    TweenService:Create(renderData.Check, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0.5, -7), ImageTransparency = 1}):Play()
-                                end
-                            end
-                        end
-                        UpdateLabel()
-                        Element.Value = currentSelection
-                        ObsidianLib.Flags[ElementName].Value = currentSelection
-                        Callback(currentSelection)
-                    end)
-                end
-                
-                ListFrame.CanvasSize = UDim2.new(0, 0, 0, #DropOptions * 26)
-            end
-
-            RefreshOptions()
-
-            Container.MouseButton1Click:Connect(function()
-                expanded = not expanded
-                if expanded then
-                    RefreshOptions()
-                    ListCanvas.Position = UDim2.new(0, SelectedBox.AbsolutePosition.X, 0, SelectedBox.AbsolutePosition.Y + (28 * CurrentScale))
-                    local dropHeight = math.min(#DropOptions * 26, 150)
-                    ListCanvas.Size = UDim2.new(0, SelectedBox.AbsoluteSize.X, 0, 0)
-                    ListCanvas.GroupTransparency = 1
-                    ListCanvas.Visible = true
-                    TweenService:Create(ListCanvas, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0, SelectedBox.AbsoluteSize.X, 0, dropHeight), GroupTransparency = 0}):Play()
-                else
-                    TweenService:Create(ListCanvas, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0, SelectedBox.AbsoluteSize.X, 0, 0), GroupTransparency = 1}):Play()
-                    task.delay(0.3, function() if not expanded then ListCanvas.Visible = false end end)
-                end
-                TweenService:Create(Icon, TweenInfo.new(0.3), {Rotation = expanded and 45 or 0}):Play()
-            end)
-
-            UserInputService.InputBegan:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                    local pos = input.Position
-                    if expanded and ListCanvas.Visible then
-                        local x1 = ListCanvas.AbsolutePosition.X
-                        local y1 = ListCanvas.AbsolutePosition.Y
-                        local x2 = x1 + ListCanvas.AbsoluteSize.X
-                        local y2 = y1 + ListCanvas.AbsoluteSize.Y
-                        local cx1 = Container.AbsolutePosition.X
-                        local cy1 = Container.AbsolutePosition.Y
-                        local cx2 = cx1 + Container.AbsoluteSize.X
-                        local cy2 = cy1 + Container.AbsoluteSize.Y
-                        
-                        if not (pos.X >= x1 and pos.X <= x2 and pos.Y >= y1 and pos.Y <= y2) and not (pos.X >= cx1 and pos.X <= cx2 and pos.Y >= cy1 and pos.Y <= cy2) then
-                            expanded = false
-                            TweenService:Create(ListCanvas, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = UDim2.new(0, SelectedBox.AbsoluteSize.X, 0, 0), GroupTransparency = 1}):Play()
-                            TweenService:Create(Icon, TweenInfo.new(0.3), {Rotation = 0}):Play()
-                            task.delay(0.3, function() if not expanded then ListCanvas.Visible = false end end)
-                        end
-                    end
-                end
-            end)
-            
-            function Element:Set(val)
-                if MultiSelect then
-                    currentSelection = type(val) == 'table' and val or {}
-                else
-                    currentSelection = getStringValue(val)
-                end
-                if type(currentSelection) == 'table' then currentSelection = 'None' end
-                UpdateLabel()
-                Element.Value = currentSelection
-                ObsidianLib.Flags[ElementName].Value = currentSelection
-                RefreshOptions()
-                Callback(currentSelection)
-            end
-
-            function Element:Refresh(newOptions)
-                DropOptions = type(newOptions) == 'table' and newOptions or {}
-                if MultiSelect then
-                    local newSel = {}
-                    for i = 1, #currentSelection do
-                        local v = currentSelection[i]
-                        if table.find(DropOptions, v) then table.insert(newSel, v) end
-                    end
-                    currentSelection = newSel
-                else
-                    if not table.find(DropOptions, currentSelection) then
-                        currentSelection = getStringValue(DropOptions)
-                    end
-                end
-                if type(currentSelection) == 'table' then currentSelection = 'None' end
-                UpdateLabel()
-                Element.Value = currentSelection
-                ObsidianLib.Flags[ElementName].Value = currentSelection
-                RefreshOptions()
-            end
-
-            return Element
-        end
-
-        Builder.CreateColorpicker = function(self, options)
-            local ElementName = options.Name or 'Colorpicker'
-            local Default = options.Default or Color3.fromRGB(255, 255, 255)
+            local OptionsList = options.Options or {}
+            local Default = options.Default or (OptionsList[1] or '')
             local Callback = options.Callback or function() end
 
             local Element = { Value = Default }
             ObsidianLib.Flags[ElementName] = Element
-            
-            local currentColor = Default
-            local h, s, v = Color3.toHSV(currentColor)
 
-            local Container = createInstance('ImageButton', {
+            local Container = createInstance('Frame', {
                 Parent = PageTarget,
                 BackgroundColor3 = Theme.ElementBG,
                 Size = UDim2.new(1, 0, 0, 36),
-                AutoButtonColor = false,
-                Image = ''
+                ClipsDescendants = false
             })
             createInstance('UICorner', {Parent = Container, CornerRadius = UDim.new(0, 4)})
             regTheme(Container, function() Container.BackgroundColor3 = Theme.ElementBG end)
@@ -1777,7 +1384,7 @@ ObsidianLib.CreateWindow = function(self, options)
                 Parent = Container,
                 BackgroundTransparency = 1,
                 Position = UDim2.new(0, 12, 0, 0),
-                Size = UDim2.new(1, -120, 1, 0),
+                Size = UDim2.new(0.5, 0, 1, 0),
                 Font = Enum.Font.GothamMedium,
                 Text = ElementName,
                 TextColor3 = Theme.TextSub,
@@ -1786,211 +1393,160 @@ ObsidianLib.CreateWindow = function(self, options)
             })
             regTheme(TitleLabel, function() TitleLabel.TextColor3 = Theme.TextSub end)
 
-            local ColorView = createInstance('Frame', {
+            local DropBtn = createInstance('TextButton', {
                 Parent = Container,
-                BackgroundColor3 = currentColor,
                 AnchorPoint = Vector2.new(1, 0.5),
-                Position = UDim2.new(1, -6, 0.5, 0),
-                Size = UDim2.new(0, 40, 0, 20)
-            })
-            createInstance('UICorner', {Parent = ColorView, CornerRadius = UDim.new(0, 4)})
-            local ColorViewStroke = createInstance('UIStroke', {Parent = ColorView, Color = Theme.Border})
-            regTheme(ColorViewStroke, function() ColorViewStroke.Color = Theme.Border end)
-
-            local FloatPicker = createInstance('Frame', {
-                Parent = ScreenGui,
-                BackgroundColor3 = Color3.fromRGB(25, 25, 25),
-                Size = UDim2.new(0, 180, 0, 190),
-                ZIndex = 100,
-                Visible = false
-            })
-            
-            local FloatPickerScale = createInstance('UIScale', {Parent = FloatPicker, Scale = CurrentScale})
-            table.insert(ScalesToUpdate, FloatPickerScale)
-
-            createInstance('UICorner', {Parent = FloatPicker, CornerRadius = UDim.new(0, 6)})
-            local FloatPickerStroke = createInstance('UIStroke', {Parent = FloatPicker, Color = Theme.Border})
-            regTheme(FloatPickerStroke, function() FloatPickerStroke.Color = Theme.Border end)
-            regTheme(FloatPicker, function() FloatPicker.BackgroundColor3 = Theme.ElementBG end)
-
-            local SatValMap = createInstance('ImageButton', {
-                Parent = FloatPicker,
-                BackgroundColor3 = Color3.fromHSV(h, 1, 1),
-                Position = UDim2.new(0, 10, 0, 10),
-                Size = UDim2.new(0, 130, 0, 130),
-                Image = 'rbxassetid://4155801252',
+                Position = UDim2.new(1, -8, 0.5, 0),
+                Size = UDim2.new(0, 110, 0, 24),
+                BackgroundColor3 = Theme.MainBG,
+                Text = '',
                 AutoButtonColor = false
             })
-            createInstance('UICorner', {Parent = SatValMap, CornerRadius = UDim.new(0, 4)})
+            createInstance('UICorner', {Parent = DropBtn, CornerRadius = UDim.new(0, 4)})
+            local DropStroke = createInstance('UIStroke', {Parent = DropBtn, Color = Theme.Border})
+            regTheme(DropBtn, function()
+                DropBtn.BackgroundColor3 = Theme.MainBG
+                DropStroke.Color = Theme.Border
+            end)
 
-            local SVKnob = createInstance('Frame', {
-                Parent = SatValMap,
-                BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-                Size = UDim2.new(0, 4, 0, 4),
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.new(s, 0, 1 - v, 0)
-            })
-            createInstance('UICorner', {Parent = SVKnob, CornerRadius = UDim.new(1, 0)})
-            createInstance('UIStroke', {Parent = SVKnob, Color = Color3.fromRGB(0, 0, 0)})
-
-            local HueMap = createInstance('ImageButton', {
-                Parent = FloatPicker,
-                Position = UDim2.new(0, 150, 0, 10),
-                Size = UDim2.new(0, 20, 0, 130),
-                BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-                AutoButtonColor = false,
-                Image = ''
-            })
-            createInstance('UICorner', {Parent = HueMap, CornerRadius = UDim.new(0, 4)})
-
-            createInstance('UIGradient', {
-                Parent = HueMap,
-                Color = ColorSequence.new({
-                    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 0, 0)),
-                    ColorSequenceKeypoint.new(0.167, Color3.fromRGB(255, 255, 0)),
-                    ColorSequenceKeypoint.new(0.333, Color3.fromRGB(0, 255, 0)),
-                    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(0, 255, 255)),
-                    ColorSequenceKeypoint.new(0.667, Color3.fromRGB(0, 0, 255)),
-                    ColorSequenceKeypoint.new(0.833, Color3.fromRGB(255, 0, 255)),
-                    ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 0, 0))
-                }),
-                Rotation = 90
-            })
-
-            local HueKnob = createInstance('Frame', {
-                Parent = HueMap,
-                BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-                Size = UDim2.new(1, 4, 0, 4),
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.new(0.5, 0, 1 - h, 0)
-            })
-            createInstance('UIStroke', {Parent = HueKnob, Color = Color3.fromRGB(0, 0, 0)})
-
-            local HexBox = createInstance('TextBox', {
-                Parent = FloatPicker,
-                Position = UDim2.new(0, 10, 0, 150),
-                Size = UDim2.new(0, 75, 0, 24),
-                BackgroundColor3 = Color3.fromRGB(35, 35, 35),
-                TextColor3 = Color3.fromRGB(255, 255, 255),
+            local DropText = createInstance('TextLabel', {
+                Parent = DropBtn,
+                BackgroundTransparency = 1,
+                Position = UDim2.new(0, 8, 0, 0),
+                Size = UDim2.new(1, -24, 1, 0),
                 Font = Enum.Font.Gotham,
+                Text = tostring(Default),
+                TextColor3 = Theme.TextSub,
                 TextSize = 11,
-                Text = currentColor:ToHex(),
-                ClearTextOnFocus = false
+                TextXAlignment = Enum.TextXAlignment.Left,
+                TextTruncate = Enum.TextTruncate.AtEnd
             })
-            createInstance('UICorner', {Parent = HexBox, CornerRadius = UDim.new(0, 4)})
-            regTheme(HexBox, function() HexBox.BackgroundColor3 = Theme.MainBG end)
+            regTheme(DropText, function() DropText.TextColor3 = Theme.TextSub end)
 
-            local RGBBox = createInstance('TextBox', {
-                Parent = FloatPicker,
-                Position = UDim2.new(0, 95, 0, 150),
-                Size = UDim2.new(0, 75, 0, 24),
-                BackgroundColor3 = Color3.fromRGB(35, 35, 35),
-                TextColor3 = Color3.fromRGB(255, 255, 255),
-                Font = Enum.Font.Gotham,
-                TextSize = 11,
-                Text = math.floor(currentColor.R*255)..', '..math.floor(currentColor.G*255)..', '..math.floor(currentColor.B*255),
-                ClearTextOnFocus = false
+            local Arrow = createInstance('TextLabel', {
+                Parent = DropBtn,
+                BackgroundTransparency = 1,
+                AnchorPoint = Vector2.new(1, 0.5),
+                Position = UDim2.new(1, -6, 0.5, 0),
+                Size = UDim2.new(0, 14, 0, 14),
+                Font = Enum.Font.GothamBold,
+                Text = 'v',
+                TextColor3 = Theme.TextSub,
+                TextSize = 10
             })
-            createInstance('UICorner', {Parent = RGBBox, CornerRadius = UDim.new(0, 4)})
-            regTheme(RGBBox, function() RGBBox.BackgroundColor3 = Theme.MainBG end)
 
             SetupTooltip(Container, options.Tip)
 
-            local UpdateColor = function()
-                currentColor = Color3.fromHSV(h, s, v)
-                ColorView.BackgroundColor3 = currentColor
-                SatValMap.BackgroundColor3 = Color3.fromHSV(h, 1, 1)
-                HexBox.Text = currentColor:ToHex()
-                RGBBox.Text = math.floor(currentColor.R*255)..', '..math.floor(currentColor.G*255)..', '..math.floor(currentColor.B*255)
-                Element.Value = currentColor
-                ObsidianLib.Flags[ElementName].Value = currentColor
-                Callback(currentColor)
+            local ListOpen = false
+            local ListFrame = createInstance('Frame', {
+                Parent = Container,
+                BackgroundColor3 = Theme.DropdownListBG,
+                Position = UDim2.new(0, 0, 1, 4),
+                Size = UDim2.new(1, 0, 0, 0),
+                Visible = false,
+                ZIndex = 50,
+                ClipsDescendants = true
+            })
+            createInstance('UICorner', {Parent = ListFrame, CornerRadius = UDim.new(0, 4)})
+            local ListStroke = createInstance('UIStroke', {Parent = ListFrame, Color = Theme.DropdownListStroke})
+            regTheme(ListFrame, function()
+                ListFrame.BackgroundColor3 = Theme.DropdownListBG
+                ListStroke.Color = Theme.DropdownListStroke
+            end)
+
+            local ListScroll = createInstance('ScrollingFrame', {
+                Parent = ListFrame,
+                BackgroundTransparency = 1,
+                Size = UDim2.new(1, 0, 1, 0),
+                ScrollBarThickness = 2,
+                BorderSizePixel = 0,
+                AutomaticCanvasSize = Enum.AutomaticSize.Y,
+                CanvasSize = UDim2.new(0, 0, 0, 0),
+                ZIndex = 51
+            })
+            createInstance('UIListLayout', {
+                Parent = ListScroll,
+                SortOrder = Enum.SortOrder.LayoutOrder,
+                Padding = UDim.new(0, 2)
+            })
+            createInstance('UIPadding', {
+                Parent = ListScroll,
+                PaddingTop = UDim.new(0, 4),
+                PaddingBottom = UDim.new(0, 4),
+                PaddingLeft = UDim.new(0, 4),
+                PaddingRight = UDim.new(0, 4)
+            })
+
+            local function RebuildList()
+                for _, c in ipairs(ListScroll:GetChildren()) do
+                    if c:IsA('TextButton') then c:Destroy() end
+                end
+                for _, opt in ipairs(OptionsList) do
+                    local optBtn = createInstance('TextButton', {
+                        Parent = ListScroll,
+                        BackgroundColor3 = Theme.ElementBG,
+                        Size = UDim2.new(1, 0, 0, 28),
+                        Text = '',
+                        AutoButtonColor = false,
+                        ZIndex = 52
+                    })
+                    createInstance('UICorner', {Parent = optBtn, CornerRadius = UDim.new(0, 3)})
+                    local optLabel = createInstance('TextLabel', {
+                        Parent = optBtn,
+                        BackgroundTransparency = 1,
+                        Size = UDim2.new(1, -10, 1, 0),
+                        Position = UDim2.new(0, 8, 0, 0),
+                        Font = Enum.Font.Gotham,
+                        Text = tostring(opt),
+                        TextColor3 = Theme.TextMain,
+                        TextSize = 12,
+                        TextXAlignment = Enum.TextXAlignment.Left,
+                        ZIndex = 53
+                    })
+                    regTheme(optBtn, function() optBtn.BackgroundColor3 = Theme.ElementBG end)
+                    regTheme(optLabel, function() optLabel.TextColor3 = Theme.TextMain end)
+
+                    optBtn.MouseEnter:Connect(function()
+                        TweenService:Create(optBtn, TweenInfo.new(0.15), {BackgroundColor3 = GetDarkerColor(Theme.ElementBG, 0.75)}):Play()
+                    end)
+                    optBtn.MouseLeave:Connect(function()
+                        TweenService:Create(optBtn, TweenInfo.new(0.15), {BackgroundColor3 = Theme.ElementBG}):Play()
+                    end)
+                    optBtn.MouseButton1Click:Connect(function()
+                        Element.Value = opt
+                        ObsidianLib.Flags[ElementName].Value = opt
+                        DropText.Text = tostring(opt)
+                        Callback(opt)
+                        ListOpen = false
+                        TweenService:Create(ListFrame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, 0)}):Play()
+                        task.delay(0.2, function() ListFrame.Visible = false end)
+                    end)
+                end
+            end
+            RebuildList()
+
+            DropBtn.MouseButton1Click:Connect(function()
+                ListOpen = not ListOpen
+                if ListOpen then
+                    ListFrame.Visible = true
+                    local h = math.min(#OptionsList * 30 + 8, 150)
+                    TweenService:Create(ListFrame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, h)}):Play()
+                else
+                    TweenService:Create(ListFrame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, 0)}):Play()
+                    task.delay(0.2, function() ListFrame.Visible = false end)
+                end
+            end)
+
+            function Element:Set(val)
+                Element.Value = val
+                DropText.Text = tostring(val)
+                ObsidianLib.Flags[ElementName].Value = val
+                Callback(val)
             end
 
-            HexBox.FocusLost:Connect(function()
-                local success, color = pcall(function() return Color3.fromHex(HexBox.Text) end)
-                if success then
-                    currentColor = color
-                    h, s, v = Color3.toHSV(currentColor)
-                    SVKnob.Position = UDim2.new(s, 0, 1 - v, 0)
-                    HueKnob.Position = UDim2.new(0.5, 0, 1 - h, 0)
-                    UpdateColor()
-                else
-                    HexBox.Text = currentColor:ToHex()
-                end
-            end)
-
-            RGBBox.FocusLost:Connect(function()
-                local r, g, b = RGBBox.Text:match('(%d+)[%s,]+(%d+)[%s,]+(%d+)')
-                if r and g and b then
-                    currentColor = Color3.fromRGB(tonumber(r), tonumber(g), tonumber(b))
-                    h, s, v = Color3.toHSV(currentColor)
-                    SVKnob.Position = UDim2.new(s, 0, 1 - v, 0)
-                    HueKnob.Position = UDim2.new(0.5, 0, 1 - h, 0)
-                    UpdateColor()
-                else
-                    RGBBox.Text = math.floor(currentColor.R*255)..', '..math.floor(currentColor.G*255)..', '..math.floor(currentColor.B*255)
-                end
-            end)
-
-            local draggingSV = false
-            SatValMap.InputBegan:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then draggingSV = true end
-            end)
-            local draggingHue = false
-            HueMap.InputBegan:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then draggingHue = true end
-            end)
-            UserInputService.InputEnded:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                    draggingSV = false
-                    draggingHue = false
-                end
-            end)
-            UserInputService.InputChanged:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-                    if draggingSV then
-                        local pctX = math.clamp((input.Position.X - SatValMap.AbsolutePosition.X) / SatValMap.AbsoluteSize.X, 0, 1)
-                        local pctY = math.clamp((input.Position.Y - SatValMap.AbsolutePosition.Y) / SatValMap.AbsoluteSize.Y, 0, 1)
-                        s = pctX
-                        v = 1 - pctY
-                        SVKnob.Position = UDim2.new(s, 0, 1 - v, 0)
-                        UpdateColor()
-                    elseif draggingHue then
-                        local pctY = math.clamp((input.Position.Y - HueMap.AbsolutePosition.Y) / HueMap.AbsoluteSize.Y, 0, 1)
-                        h = 1 - pctY
-                        HueKnob.Position = UDim2.new(0.5, 0, 1 - h, 0)
-                        UpdateColor()
-                    end
-                end
-            end)
-
-            Container.MouseButton1Click:Connect(function()
-                FloatPicker.Position = UDim2.new(0, ColorView.AbsolutePosition.X - (140 * CurrentScale), 0, ColorView.AbsolutePosition.Y + (28 * CurrentScale))
-                FloatPicker.Visible = not FloatPicker.Visible
-            end)
-
-            UserInputService.InputBegan:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                    local pos = input.Position
-                    if FloatPicker.Visible then
-                        local x1, y1 = FloatPicker.AbsolutePosition.X, FloatPicker.AbsolutePosition.Y
-                        local x2, y2 = x1 + FloatPicker.AbsoluteSize.X, y1 + FloatPicker.AbsoluteSize.Y
-                        local cx1, cy1 = Container.AbsolutePosition.X, Container.AbsolutePosition.Y
-                        local cx2, cy2 = cx1 + Container.AbsoluteSize.X, cy1 + Container.AbsoluteSize.Y
-                        if not (pos.X >= x1 and pos.X <= x2 and pos.Y >= y1 and pos.Y <= y2) and not (pos.X >= cx1 and pos.X <= cx2 and pos.Y >= cy1 and pos.Y <= cy2) then
-                            FloatPicker.Visible = false
-                        end
-                    end
-                end
-            end)
-            
-            function Element:Set(val)
-                currentColor = val
-                h, s, v = Color3.toHSV(currentColor)
-                SVKnob.Position = UDim2.new(s, 0, 1 - v, 0)
-                HueKnob.Position = UDim2.new(0.5, 0, 1 - h, 0)
-                UpdateColor()
+            function Element:Refresh(newOptions)
+                OptionsList = newOptions or {}
+                RebuildList()
             end
 
             return Element
@@ -2208,7 +1764,6 @@ ObsidianLib.CreateWindow = function(self, options)
             })
         end)
 
-        -- Left accent bar (visible when selected)
         local AccentBar = createInstance('Frame', {
             Parent = TabBtn,
             BackgroundColor3 = Theme.Accent,
@@ -2412,7 +1967,7 @@ ObsidianLib.CreateWindow = function(self, options)
     })
     
     local AccentColorElement
-    AccentColorElement = WindowObj.UISettings:CreateColorpicker({
+    AccentColorElement = WindowObj.UISettings:CreateColorpicker and WindowObj.UISettings:CreateColorpicker({
         Name = 'Accent Color',
         Default = Theme.Accent,
         Callback = function(color) 
@@ -2420,7 +1975,7 @@ ObsidianLib.CreateWindow = function(self, options)
                 UpdateThemeAccent(color) 
             end
         end
-    })
+    }) or nil
 
     WindowObj.UISettings:CreateToggle({
         Name = 'Rainbow Accent',
@@ -2657,18 +2212,14 @@ ObsidianLib.CreateWindow = function(self, options)
     return WindowObj
 end
 
-
 -- ============================================================
--- Practical Basketball - Auto Timing (Obsidian UI)
+-- Create hub window
 -- ============================================================
-
 local Window = ObsidianLib:CreateWindow({
-    Title = 'Basketball',
+    Title = 'PB',
     Prefix = 'Obsidian ',
     Theme = 'Obsidian'
 })
-
-local VirtualInputManager = game:GetService('VirtualInputManager')
 
 -- ============================================================
 -- AUTO TIMING TAB
@@ -2687,15 +2238,15 @@ local autoTiming = {
 
 AutoTimingTab:CreateParagraph({
     Title = '⚠️ Important Note',
-    Content = 'Three-point and mid-range shots default to 0.59s release. Adjust the slider if needed. Not a guaranteed green — contest and range still matter.',
+    Content = 'Three-point shots and mid-range shots are set to a 0.59 second release. You can adjust the Release Time slider if needed. This is not a guaranteed green; contest and range still matter!',
 })
 
 AutoTimingTab:CreateToggle({
     Name = 'Auto Time Shots',
     Default = false,
-    Tip = 'Enable timed release on the trigger keybind',
-    Callback = function(v)
-        autoTiming.Enabled = v
+    Tip = 'Enable timed release on keybind',
+    Callback = function(enabled)
+        autoTiming.Enabled = enabled
     end,
 })
 
@@ -2707,12 +2258,12 @@ AutoTimingTab:CreateSlider({
     Increment = 0.01,
     Suffix = 's',
     Tip = 'How long to hold the shoot key',
-    Callback = function(v)
-        autoTiming.ReleaseTime = v
+    Callback = function(value)
+        autoTiming.ReleaseTime = value
     end,
 })
 
-local ShootKeyMap = {
+local ShootKeyOptions = {
     E = Enum.KeyCode.E,
     Space = Enum.KeyCode.Space,
     F = Enum.KeyCode.F,
@@ -2723,40 +2274,51 @@ AutoTimingTab:CreateDropdown({
     Name = 'Game Shoot Key',
     Options = { 'E', 'Space', 'F', 'G' },
     Default = 'E',
-    Tip = 'Key the game uses to shoot',
-    Callback = function(sel)
-        autoTiming.ShootKey = ShootKeyMap[sel] or Enum.KeyCode.E
+    Tip = 'Which key the game uses to shoot',
+    Callback = function(selectedKey)
+        autoTiming.ShootKey = ShootKeyOptions[selectedKey] or Enum.KeyCode.E
     end,
 })
-
-local triggerKey = Enum.KeyCode.Q
 
 AutoTimingTab:CreateKeybind({
     Name = 'Trigger Auto-Shoot',
     Default = Enum.KeyCode.Q,
-    Tip = 'Press this to fire a timed shot',
+    Tip = 'Press this key to auto-time a shot',
     Callback = function(key)
-        triggerKey = key
+        -- Keybind element just stores the key; we handle the actual trigger below
     end,
 })
 
--- Fire the timed shot when trigger key is pressed
+-- Actual trigger logic (listens for Q by default, or whatever the user set)
+local triggerKey = Enum.KeyCode.Q
+
+-- Re-bind when the keybind element changes (simple approach)
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if not autoTiming.Enabled or autoTiming.IsShooting then return end
-    if input.KeyCode ~= triggerKey then return end
 
-    autoTiming.IsShooting = true
-    VirtualInputManager:SendKeyEvent(true, autoTiming.ShootKey, false, game)
-    task.wait(autoTiming.ReleaseTime)
-    VirtualInputManager:SendKeyEvent(false, autoTiming.ShootKey, false, game)
-    autoTiming.IsShooting = false
+    -- Use the currently stored flag value if available, otherwise default Q
+    local bind = ObsidianLib.Flags['Trigger Auto-Shoot']
+    local activeKey = (bind and bind.Value) or triggerKey
+
+    if input.KeyCode == activeKey then
+        autoTiming.IsShooting = true
+
+        VirtualInputManager:SendKeyEvent(true, autoTiming.ShootKey, false, game)
+        task.wait(autoTiming.ReleaseTime)
+        VirtualInputManager:SendKeyEvent(false, autoTiming.ShootKey, false, game)
+
+        autoTiming.IsShooting = false
+    end
 end)
 
-task.delay(0.6, function()
+-- Startup notification
+task.delay(0.5, function()
     ObsidianLib:Notify({
-        Title = 'Loaded',
+        Title = 'Loaded Successfully',
         Content = 'Practical Basketball ready!',
         Duration = 4,
     })
 end)
+
+print('[Obsidian Basketball] Loaded')
