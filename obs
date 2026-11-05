@@ -2658,105 +2658,402 @@ ObsidianLib.CreateWindow = function(self, options)
 end
 
 
+
 -- ============================================================
--- Practical Basketball - Auto Timing (Obsidian UI)
+-- Practical Basketball - Obsidian Hub
+-- Auto Green + Proxy Movement
 -- ============================================================
 
 local Window = ObsidianLib:CreateWindow({
-    Title = 'Basketball',
+    Title = 'PB',
     Prefix = 'Obsidian ',
     Theme = 'Obsidian'
 })
 
 local VirtualInputManager = game:GetService('VirtualInputManager')
+local Workspace = game:GetService('Workspace')
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+
+
+
+
 
 -- ============================================================
--- AUTO TIMING TAB
--- ============================================================
-local AutoTimingTab = Window:CreateTab({
-    Name = 'Auto Timing',
-    Icon = 'rbxassetid://111953289912698'
-})
+-- AUTO GREEN — 100% window spam + auto release every shot
 
-local autoTiming = {
+-- ============================================================
+-- AUTO GREEN — real meter timing + real Shoot remote
+-- RunGreenEffect / Output are RESULTS of greens, not causes
+
+-- ============================================================
+-- AUTO GREEN — namecall hook force (how paid hubs do it)
+-- Hooks RegisterPacket so the value the server sees is perfect
+
+-- ============================================================
+-- AUTO GREEN — original client Signal:Fire method (not remotes)
+-- ============================================================
+ObsidianLib.ShowNotifications = false
+ObsidianLib.ShowTooltips = false
+local AutoGreen = {
     Enabled = false,
-    ReleaseTime = 0.59,
-    ShootKey = Enum.KeyCode.E,
-    IsShooting = false,
+    TrimMs = -133,
+    PingAverage = nil,
+    CurrentShot = nil,
+    Connections = {},
+    Debug = false,
 }
 
-AutoTimingTab:CreateParagraph({
-    Title = '⚠️ Important Note',
-    Content = 'Three-point and mid-range shots default to 0.59s release. Adjust the slider if needed. Not a guaranteed green — contest and range still matter.',
+local NetworkInterval = 1 / 60
+pcall(function()
+    local aero = ReplicatedStorage:FindFirstChild('Aero')
+    local shared = aero and aero:FindFirstChild('Shared')
+    local replication = shared and shared:FindFirstChild('Replication')
+    local config = replication and replication:FindFirstChild('ReplicationConfig')
+    if config then
+        local data = require(config)
+        if data.Network and data.Network.INTERVAL then
+            NetworkInterval = data.Network.INTERVAL
+        end
+    end
+end)
+
+local CachedServices = nil
+
+local function GetGameServices()
+    if CachedServices then return CachedServices end
+    local scripts = LocalPlayer:FindFirstChild('PlayerScripts')
+    local aero = scripts and scripts:FindFirstChild('Aero')
+    local controllers = aero and aero:FindFirstChild('Controllers')
+    if not controllers then
+        return nil
+    end
+    -- ONLY require direct children named these — never scan descendants (GoodSignal crash)
+    for _, name in ipairs({ 'Meter', 'Player', 'Gui', 'UserInput', 'Characters' }) do
+        local module = controllers:FindFirstChild(name)
+        if module and module:IsA('ModuleScript') then
+            local success, result = pcall(require, module)
+            if success and type(result) == 'table' then
+                local services = nil
+                pcall(function() services = result.Services end)
+                if type(services) == 'table' then
+                    local ok = false
+                    pcall(function()
+                        ok = services.InputService ~= nil and services.InputService.Shoot ~= nil
+                    end)
+                    if ok then
+                        CachedServices = services
+                        print('[AutoGreen] InputService from Controllers.' .. name)
+                        return CachedServices
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function ReleaseShot()
+    local services = GetGameServices()
+    if services and services.InputService and services.InputService.Shoot then
+        local ok = pcall(function()
+            services.InputService.Shoot:Fire({ Shoot = false })
+        end)
+        if ok then
+            if AutoGreen.Debug then print('[AutoGreen] Released via Signal:Fire') end
+            return true
+        end
+    end
+    -- backup
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    end)
+    if AutoGreen.Debug then print('[AutoGreen] Released via VIM fallback') end
+    return false
+end
+
+local function StartShot()
+    local services = GetGameServices()
+    if services and services.InputService and services.InputService.Shoot then
+        pcall(function()
+            services.InputService.Shoot:Fire({ Shoot = true })
+        end)
+    end
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+    end)
+    if AutoGreen.Debug then print('[AutoGreen] Shot started') end
+end
+
+local function Median(numbers)
+    if #numbers == 0 then return nil end
+    local sorted = table.clone(numbers)
+    table.sort(sorted)
+    return sorted[math.ceil(#sorted / 2)]
+end
+
+local function CalculateShotTiming(now)
+    local shot = AutoGreen.CurrentShot
+    if not shot or #shot.Samples < 2 then return end
+    local differences = {}
+    for i = 2, #shot.Samples do
+        local difference = shot.Samples[i] - shot.Samples[i - 1]
+        if difference > 0.005 then
+            table.insert(differences, difference)
+        end
+    end
+    local step = Median(differences)
+    if not step or step <= 0 then return end
+    local frames = math.floor(1 / step)
+    if frames < 8 or frames > 90 then return end
+    local remaining = frames - math.floor(shot.Samples[#shot.Samples] / step + 0.5)
+    shot.Frames = frames
+    shot.PeakAt = now + remaining * NetworkInterval
+    if AutoGreen.Debug then
+        print(string.format('[AutoGreen] Peak in %.0fms (%d frames)', remaining * NetworkInterval * 1000, frames))
+    end
+end
+
+local function BindCharacter(character)
+    if not character then return end
+    pcall(function() character:WaitForChild('HumanoidRootPart', 10) end)
+
+    table.insert(AutoGreen.Connections,
+        character:GetAttributeChangedSignal('ShotStartTime'):Connect(function()
+            AutoGreen.CurrentShot = {
+                Start = character:GetAttribute('ShotStartTime'),
+                Samples = {},
+                Fired = false,
+                StartedAt = os.clock(),
+            }
+            if AutoGreen.Debug then print('[AutoGreen] ShotStartTime') end
+        end)
+    )
+
+    table.insert(AutoGreen.Connections,
+        character:GetAttributeChangedSignal('meterOffset'):Connect(function()
+            local shot = AutoGreen.CurrentShot
+            if not shot or shot.Fired then return end
+            local offset = character:GetAttribute('meterOffset')
+            local value = typeof(offset) == 'Vector2'
+                and math.abs(offset.Y)
+                or math.abs(tonumber(offset) or 0)
+            table.insert(shot.Samples, value)
+            CalculateShotTiming(os.clock())
+        end)
+    )
+
+    table.insert(AutoGreen.Connections,
+        character:GetAttributeChangedSignal('ReleasedShot'):Connect(function()
+            if AutoGreen.CurrentShot and character:GetAttribute('ReleasedShot') == true then
+                AutoGreen.CurrentShot.Fired = true
+            end
+        end)
+    )
+end
+
+function AutoGreen.SetEnabled(enabled)
+    AutoGreen.Enabled = enabled
+end
+
+function AutoGreen.Start()
+    local characters = Workspace:WaitForChild('Characters', 10)
+    if not characters then
+        warn('[AutoGreen] Characters not found')
+        return false
+    end
+    local current = characters:FindFirstChild(LocalPlayer.Name)
+    if current then BindCharacter(current) end
+    table.insert(AutoGreen.Connections,
+        characters.ChildAdded:Connect(function(character)
+            if character.Name == LocalPlayer.Name then
+                task.wait(0.5)
+                BindCharacter(character)
+            end
+        end)
+    )
+
+    table.insert(AutoGreen.Connections,
+        RunService.Heartbeat:Connect(function()
+            local ping = LocalPlayer:GetNetworkPing()
+            AutoGreen.PingAverage = AutoGreen.PingAverage
+                and AutoGreen.PingAverage * 0.9 + ping * 0.1
+                or ping
+            if not AutoGreen.Enabled then return end
+            local shot = AutoGreen.CurrentShot
+            if not shot or shot.Fired or not shot.PeakAt then return end
+            local targetTime = shot.PeakAt - (AutoGreen.PingAverage + AutoGreen.TrimMs / 1000)
+            if os.clock() >= targetTime then
+                shot.Fired = true
+                ReleaseShot()
+            end
+        end)
+    )
+
+    -- warm InputService
+    task.spawn(function()
+        task.wait(1)
+        local s = GetGameServices()
+        if s then
+            print('[AutoGreen] Client InputService ready')
+        else
+            warn('[AutoGreen] Client InputService NOT found — will use VIM')
+        end
+    end)
+
+    return true
+end
+
+function AutoGreen.Stop()
+    AutoGreen.Enabled = false
+    for _, connection in ipairs(AutoGreen.Connections) do
+        pcall(function() connection:Disconnect() end)
+    end
+    table.clear(AutoGreen.Connections)
+    AutoGreen.CurrentShot = nil
+end
+
+-- ============================================================
+-- MOVEMENT
+-- ============================================================
+local Movement = {
+    Speed = false, SpeedValue = 30,
+    Fly = false, FlySpeed = 60,
+    Glide = false, Connections = {},
+}
+local flying, flyPosition = false, nil
+
+local function GetProxyCharacter()
+    return Workspace:FindFirstChild('ProxyCharacter')
+end
+local function GetPlayerCharacter()
+    local c = Workspace:FindFirstChild('Characters')
+    return c and c:FindFirstChild(LocalPlayer.Name)
+end
+local function GetMovementDirection(allowVertical)
+    local camera = Workspace.CurrentCamera
+    if not camera then return Vector3.zero end
+    local cf = camera.CFrame
+    local direction = Vector3.zero
+    if UserInputService:IsKeyDown(Enum.KeyCode.W) then direction += cf.LookVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.S) then direction -= cf.LookVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.D) then direction += cf.RightVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.A) then direction -= cf.RightVector end
+    if not allowVertical then direction = Vector3.new(direction.X, 0, direction.Z) end
+    return direction.Magnitude > 0.01 and direction.Unit or Vector3.zero
+end
+
+local function UpdateMovement(_, dt)
+    local proxy, character = GetProxyCharacter(), GetPlayerCharacter()
+    if not proxy or not character then return end
+    local velocity = proxy:FindFirstChild('MovementVelocity')
+    if not velocity then return end
+    if not Movement.Fly and flying then
+        flying, flyPosition = false, nil
+        proxy.Anchored = false
+    end
+    if Movement.Fly then
+        local direction = GetMovementDirection(true)
+        if not proxy.Anchored then proxy.Anchored = true; flying = true end
+        flyPosition = flyPosition or proxy.Position
+        flyPosition += direction * Movement.FlySpeed * dt
+        local cam = Workspace.CurrentCamera
+        local rot = cam and math.atan2(-cam.CFrame.LookVector.X, -cam.CFrame.LookVector.Z) or 0
+        proxy.CFrame = CFrame.new(flyPosition) * CFrame.Angles(0, rot, 0)
+        return
+    end
+    local canMove = character:GetAttribute('CanMove')
+    if not (canMove and Movement.Speed) and not (not canMove and Movement.Glide) then return end
+    local direction = GetMovementDirection(false)
+    if direction.Magnitude < 0.01 then return end
+    local speed = Movement.Speed and Movement.SpeedValue or character:GetAttribute('WalkSpeed') or 14
+    if proxy.Anchored then proxy.Anchored = false end
+    velocity.MaxForce = Vector3.new(1e6, 0, 1e6)
+    velocity.Velocity = Vector3.new(direction.X * speed, velocity.Velocity.Y, direction.Z * speed)
+end
+
+function Movement.Start()
+    table.insert(Movement.Connections, RunService.Stepped:Connect(UpdateMovement))
+end
+function Movement.Stop()
+    Movement.Speed, Movement.Fly, Movement.Glide = false, false, false
+    local proxy = GetProxyCharacter()
+    if proxy then proxy.Anchored = false end
+    flying, flyPosition = false, nil
+    for _, c in ipairs(Movement.Connections) do pcall(function() c:Disconnect() end) end
+    table.clear(Movement.Connections)
+end
+
+-- ============================================================
+-- UI
+-- ============================================================
+local GreenTab = Window:CreateTab({ Name = 'Auto Green', Icon = 'rbxassetid://111953289912698' })
+
+GreenTab:CreateParagraph({
+    Title = 'Auto Green',
+    Content = 'Remember Bro it isnt always perfect so stfu',
 })
 
-AutoTimingTab:CreateToggle({
-    Name = 'Auto Time Shots',
+GreenTab:CreateToggle({
+    Name = 'Auto Green',
     Default = false,
-    Tip = 'Enable timed release on the trigger keybind',
     Callback = function(v)
-        autoTiming.Enabled = v
+        AutoGreen.SetEnabled(v)
+        if v then GetGameServices() end
     end,
 })
 
-AutoTimingTab:CreateSlider({
-    Name = 'Release Time',
-    Min = 0.1,
-    Max = 1.5,
-    Default = 0.59,
-    Increment = 0.01,
-    Suffix = 's',
-    Tip = 'How long to hold the shoot key',
-    Callback = function(v)
-        autoTiming.ReleaseTime = v
-    end,
-})
-
-local ShootKeyMap = {
-    E = Enum.KeyCode.E,
-    Space = Enum.KeyCode.Space,
-    F = Enum.KeyCode.F,
-    G = Enum.KeyCode.G,
-}
-
-AutoTimingTab:CreateDropdown({
-    Name = 'Game Shoot Key',
-    Options = { 'E', 'Space', 'F', 'G' },
-    Default = 'E',
-    Tip = 'Key the game uses to shoot',
-    Callback = function(sel)
-        autoTiming.ShootKey = ShootKeyMap[sel] or Enum.KeyCode.E
-    end,
-})
-
-local triggerKey = Enum.KeyCode.Q
-
-AutoTimingTab:CreateKeybind({
-    Name = 'Trigger Auto-Shoot',
+local shootKey = Enum.KeyCode.Q
+GreenTab:CreateKeybind({
+    Name = 'Shoot Key',
     Default = Enum.KeyCode.Q,
-    Tip = 'Press this to fire a timed shot',
-    Callback = function(key)
-        triggerKey = key
-    end,
+    Tip = 'Press to start timed shot',
+    Callback = function(key) shootKey = key end,
 })
 
--- Fire the timed shot when trigger key is pressed
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
-    if not autoTiming.Enabled or autoTiming.IsShooting then return end
-    if input.KeyCode ~= triggerKey then return end
-
-    autoTiming.IsShooting = true
-    VirtualInputManager:SendKeyEvent(true, autoTiming.ShootKey, false, game)
-    task.wait(autoTiming.ReleaseTime)
-    VirtualInputManager:SendKeyEvent(false, autoTiming.ShootKey, false, game)
-    autoTiming.IsShooting = false
+    if input.KeyCode ~= shootKey then return end
+    if not AutoGreen.Enabled then return end
+    StartShot()
 end)
 
-task.delay(0.6, function()
-    ObsidianLib:Notify({
-        Title = 'Loaded',
-        Content = 'Practical Basketball ready!',
-        Duration = 4,
-    })
+local MovementTab = Window:CreateTab({ Name = 'Movement', Icon = 'rbxassetid://111953289912698' })
+MovementTab:CreateToggle({ Name = 'Speed', Default = false, Callback = function(v) Movement.Speed = v end })
+MovementTab:CreateSlider({ Name = 'Speed Value', Min = 14, Max = 120, Default = 30, Increment = 1, Suffix = '', Callback = function(v) Movement.SpeedValue = v end })
+MovementTab:CreateDivider()
+MovementTab:CreateToggle({ Name = 'Glide', Default = false, Callback = function(v) Movement.Glide = v end })
+MovementTab:CreateDivider()
+MovementTab:CreateToggle({
+    Name = 'Fly', Default = false,
+    Callback = function(v)
+        Movement.Fly = v
+        if not v then
+            local proxy = GetProxyCharacter()
+            if proxy then proxy.Anchored = false end
+            flying, flyPosition = false, nil
+        end
+    end,
+})
+MovementTab:CreateSlider({ Name = 'Fly Speed', Min = 20, Max = 200, Default = 60, Increment = 1, Suffix = '', Callback = function(v) Movement.FlySpeed = v end })
+
+task.spawn(function()
+    local proxy = Workspace:FindFirstChild('ProxyCharacter')
+    if proxy then pcall(function() proxy.Anchored = false end) end
+    AutoGreen.Start()
+    Movement.Start()
 end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.25)
+        if not Movement.Fly then
+            local proxy = Workspace:FindFirstChild('ProxyCharacter')
+            if proxy and proxy.Anchored then
+                proxy.Anchored = false
+                flying, flyPosition = false, nil
+            end
+        end
+    end
+end)
+
+print('[Obsidian Basketball] Loaded')
